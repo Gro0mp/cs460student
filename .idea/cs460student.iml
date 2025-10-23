@@ -10,5 +10,6 @@
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="library" name="xtk_edge" level="application" />
     <orderEntry type="library" name="es-module-shims" level="application" />
+    <orderEntry type="library" name="glmatrix" level="application" />
   </component>
 </module>
