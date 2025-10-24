@@ -1,0 +1,412 @@
+<html>
+<head>
+    <meta content="text/html;charset=utf-8" http-equiv="Content-Type">
+    <meta content="utf-8" http-equiv="encoding">
+    <title>WebGPU Fish!</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden !important;
+            background: url('https://cs460.org/assignments/04/bg.jpg');
+            background-size: cover;
+        }
+
+        #c {
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+
+        #error {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            font-family: Arial, sans-serif;
+        }
+    </style>
+</head>
+
+<body>
+<canvas id="c"></canvas>
+<div id="error">WebGPU is not supported in your browser. Please use Chrome 113+, Edge 113+, or enable WebGPU in chrome://flags</div>
+
+<script>
+    let canvas, ctx, device, pipeline, eyePipeline;
+    let all_fish = [];
+    let isDragging = false;
+
+    const shaderCode = `
+        struct Uniforms {
+            transform: mat4x4<f32>,
+            color: vec4<f32>,
+        }
+
+        @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+        struct VertexInput {
+            @location(0) position: vec3<f32>,
+        }
+
+        struct VertexOutput {
+            @builtin(position) position: vec4<f32>,
+        }
+
+        @vertex
+        fn vertexMain(input: VertexInput) -> VertexOutput {
+            var output: VertexOutput;
+            output.position = uniforms.transform * vec4<f32>(input.position, 1.0);
+            return output;
+        }
+
+        @fragment
+        fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
+            return uniforms.color;
+        }
+    `;
+
+    async function init() {
+        canvas = document.getElementById('c');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        if (!navigator.gpu) {
+            document.getElementById('error').style.display = 'block';
+            return;
+        }
+
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) {
+            document.getElementById('error').style.display = 'block';
+            return;
+        }
+
+        device = await adapter.requestDevice();
+        ctx = canvas.getContext('webgpu');
+
+        const format = navigator.gpu.getPreferredCanvasFormat();
+        ctx.configure({
+            device: device,
+            format: format,
+            alphaMode: 'premultiplied',
+        });
+
+        // Create shader module
+        const shaderModule = device.createShaderModule({
+            code: shaderCode,
+        });
+
+        // Create pipeline for fish body
+        pipeline = device.createRenderPipeline({
+            layout: 'auto',
+            vertex: {
+                module: shaderModule,
+                entryPoint: 'vertexMain',
+                buffers: [{
+                    arrayStride: 12, // 3 floats * 4 bytes
+                    attributes: [{
+                        shaderLocation: 0,
+                        offset: 0,
+                        format: 'float32x3',
+                    }],
+                }],
+            },
+            fragment: {
+                module: shaderModule,
+                entryPoint: 'fragmentMain',
+                targets: [{
+                    format: format,
+                    blend: {
+                        color: {
+                            srcFactor: 'src-alpha',
+                            dstFactor: 'one-minus-src-alpha',
+                            operation: 'add',
+                        },
+                        alpha: {
+                            srcFactor: 'one',
+                            dstFactor: 'one-minus-src-alpha',
+                            operation: 'add',
+                        },
+                    },
+                }],
+            },
+            primitive: {
+                topology: 'triangle-list',
+                cullMode: 'none',
+            },
+        });
+
+        // Create fish
+        all_fish.push(createFish([0, 0, 0], [1, 0, 0, 0.7], 1, -1));
+        for (let i = 0; i < 100; i++) {
+            const random_color = [Math.random(), Math.random(), Math.random(), Math.random()];
+            const random_offset = [Math.random() - Math.random(), Math.random() - Math.random(), 0];
+            const random_scale = Math.random() * 0.3;
+            all_fish.push(createFish(random_offset, random_color, random_scale, 1));
+        }
+
+        // Add mouse event listeners
+        canvas.addEventListener('mousedown', onMouseDown);
+        canvas.addEventListener('mousemove', onMouseMove);
+        canvas.addEventListener('mouseup', onMouseUp);
+        canvas.addEventListener('mouseleave', onMouseUp);
+
+        animate();
+    }
+    function createFish(offset, color, scale, direction) {
+        const vertices = new Float32Array([
+            0.5, 0.0, 0.0,      // 0: nose
+            0.2, 0.25, 0.0,     // 1: upper body
+            -0.2, 0.15, 0.0,    // 2: upper tail base
+            -0.4, 0.3, 0.0,     // 3: upper tail tip
+            -0.4, -0.3, 0.0,    // 4: lower tail tip
+            -0.2, -0.15, 0.0,   // 5: lower tail base
+            0.2, -0.25, 0.0     // 6: lower body
+        ]);
+
+        let indices = new Uint16Array([
+            0, 1, 6,  // main body
+            1, 2, 6,  // upper mid-body
+            2, 5, 6,  // rear body
+            2, 3, 5,  // tail top
+            3, 4, 5   // tail fin
+        ]);
+
+        // Pad index array to make byteLength multiple of 4
+        if (indices.length % 2 !== 0) {
+            const padded = new Uint16Array(indices.length + 1);
+            padded.set(indices);
+            indices = padded;
+        }
+
+        const vertexBuffer = device.createBuffer({
+            size: vertices.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        });
+        device.queue.writeBuffer(vertexBuffer, 0, vertices);
+
+        const indexBuffer = device.createBuffer({
+            size: indices.byteLength,
+            usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+        });
+        device.queue.writeBuffer(indexBuffer, 0, indices);
+
+        // ---- Eye geometry ----
+        const eyeY = direction === -1 ? -0.2 : 0.2;
+        const eyeX = 0.2;
+        const eyeRadius = 0.05;
+        const segments = 8;
+        const eyeVertices = [];
+
+        for (let i = 0; i < segments; i++) {
+            const angle = (i / segments) * Math.PI * 2;
+            eyeVertices.push(
+                eyeX + Math.cos(angle) * eyeRadius,
+                eyeY + Math.sin(angle) * eyeRadius,
+                0.0
+            );
+        }
+
+        const eyeIndices = [];
+        for (let i = 1; i < segments - 1; i++) {
+            eyeIndices.push(0, i, i + 1);
+        }
+
+        let eyeIndexArray = new Uint16Array(eyeIndices);
+        // Pad to multiple of 4 bytes
+        if (eyeIndexArray.length % 2 !== 0) {
+            const padded = new Uint16Array(eyeIndexArray.length + 1);
+            padded.set(eyeIndexArray);
+            eyeIndexArray = padded;
+        }
+
+        const eyeVertexArray = new Float32Array(eyeVertices);
+        const eyeBuffer = device.createBuffer({
+            size: eyeVertexArray.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        });
+        device.queue.writeBuffer(eyeBuffer, 0, eyeVertexArray);
+
+        const eyeIndexBuffer = device.createBuffer({
+            size: eyeIndexArray.byteLength,
+            usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+        });
+        device.queue.writeBuffer(eyeIndexBuffer, 0, eyeIndexArray);
+
+        // ---- Uniform buffers (separate for body and eye) ----
+        const uniformBuffer = device.createBuffer({
+            size: 256,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+
+        const eyeUniformBuffer = device.createBuffer({
+            size: 256,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+
+        const bindGroup = device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [{ binding: 0, resource: { buffer: uniformBuffer } }],
+        });
+
+        const eyeBindGroup = device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [{ binding: 0, resource: { buffer: eyeUniformBuffer } }],
+        });
+
+        return {
+            vertexBuffer,
+            indexBuffer,
+            eyeBuffer,
+            eyeIndexBuffer,
+            uniformBuffer,
+            eyeUniformBuffer,
+            bindGroup,
+            eyeBindGroup,
+            offset: new Float32Array(offset),
+            color: new Float32Array(color),
+            scale,
+            direction,
+            indexCount: indices.length,
+            eyeIndexCount: eyeIndexArray.length,
+        };
+    }
+
+
+    function screenToGL(x, y) {
+        const rect = canvas.getBoundingClientRect();
+        const glX = ((x - rect.left) / rect.width) * 2 - 1;
+        const glY = -(((y - rect.top) / rect.height) * 2 - 1);
+        return [glX, glY];
+    }
+
+    function isNearFish(x, y) {
+        const fishPos = all_fish[0].offset;
+        const fishScale = all_fish[0].scale;
+        const distance = Math.sqrt((x - fishPos[0]) ** 2 + (y - fishPos[1]) ** 2);
+        return distance < 0.3 * fishScale;
+    }
+
+    function onMouseDown(e) {
+        const [glX, glY] = screenToGL(e.clientX, e.clientY);
+        if (isNearFish(glX, glY)) {
+            isDragging = true;
+            canvas.style.cursor = 'grabbing';
+        }
+    }
+
+    function onMouseMove(e) {
+        if (isDragging) {
+            const [glX, glY] = screenToGL(e.clientX, e.clientY);
+            all_fish[0].offset[0] = glX;
+            all_fish[0].offset[1] = glY;
+        }
+    }
+
+    function onMouseUp(e) {
+        isDragging = false;
+        canvas.style.cursor = 'pointer';
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        const commandEncoder = device.createCommandEncoder();
+        const textureView = ctx.getCurrentTexture().createView();
+
+        const renderPass = commandEncoder.beginRenderPass({
+            colorAttachments: [{
+                view: textureView,
+                loadOp: 'clear',
+                storeOp: 'store',
+            }],
+        });
+
+        renderPass.setPipeline(pipeline);
+
+        const t = performance.now() * 0.001;
+
+        for (let r = 0; r < all_fish.length; r++) {
+            const fish = all_fish[r];
+
+            // Move fish horizontally
+            if (r === 0) {
+                if (!isDragging) {
+                    fish.offset[0] -= 0.01;
+                    if (fish.offset[0] < -1.2) fish.offset[0] = 1.2;
+                }
+            } else {
+                fish.offset[0] += 0.01;
+                if (fish.offset[0] > 1.2) fish.offset[0] = -1.2;
+            }
+
+            // Gentle vertical motion
+            fish.offset[1] += 0.1 * (Math.random() - 0.5);
+
+            // Transformation matrix
+            const theta = Math.random() * 10 * Math.PI / 180;
+            const cos = Math.cos(theta);
+            const sin = Math.sin(theta);
+            const transform = new Float32Array([
+                fish.direction * fish.scale * cos, sin, 0, 0,
+                -sin, fish.direction * fish.scale * cos, 0, 0,
+                0, 0, fish.direction * fish.scale, 0,
+                fish.offset[0], fish.offset[1], fish.offset[2], 1
+            ]);
+
+            // Color animation
+            let color;
+            if (r === 0) {
+                color = new Float32Array([1, 0, 0, 1]); // main red fish
+            } else {
+                const a = 0.7 + 0.3 * Math.sin(t * 2.0);
+                color = new Float32Array([
+                    0.3 + 0.2 * Math.sin(t + r),
+                    0.6 + 0.3 * Math.sin(t + r * 1.5),
+                    0.8 + 0.2 * Math.sin(t + r * 2.0),
+                    a
+                ]);
+            }
+
+            // Uniforms: mat4 (16 floats) + vec4 (4 floats)
+            const uniformData = new Float32Array(20);
+            uniformData.set(transform, 0);
+            uniformData.set(color, 16);
+
+            // write to fish body uniform buffer
+            device.queue.writeBuffer(fish.uniformBuffer, 0, uniformData);
+
+            // ---- Draw fish body ----
+            renderPass.setBindGroup(0, fish.bindGroup);
+            renderPass.setVertexBuffer(0, fish.vertexBuffer);
+            renderPass.setIndexBuffer(fish.indexBuffer, 'uint16');
+            renderPass.drawIndexed(fish.indexCount);
+
+            // ---- Draw fish eye ----
+            const eyeUniformData = new Float32Array(20);
+            eyeUniformData.set(transform, 0);
+            eyeUniformData.set([0, 0, 0, 1], 16); // solid black eye
+            device.queue.writeBuffer(fish.eyeUniformBuffer, 0, eyeUniformData);
+
+            renderPass.setBindGroup(0, fish.eyeBindGroup);
+            renderPass.setVertexBuffer(0, fish.eyeBuffer);
+            renderPass.setIndexBuffer(fish.eyeIndexBuffer, 'uint16');
+            renderPass.drawIndexed(fish.eyeIndexCount);
+        }
+
+        renderPass.end();
+        device.queue.submit([commandEncoder.finish()]);
+    }
+
+
+    window.onload = init;
+</script>
+</body>
+</html>

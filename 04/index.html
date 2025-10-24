@@ -5,18 +5,18 @@
     <title>Default WebGL!</title>
     <style>
         html, body {
-            background-color:#000;
             margin: 0;
             padding: 0;
             height: 100%;
             overflow: hidden !important;
-            background: url('https://cs460.org/assignments/04/bg.jpg');
+            background: #000 url('https://cs460.org/assignments/04/bg.jpg');
             background-size: cover;
         }
 
         #c {
             width: 100%;
             height: 100%;
+            cursor: pointer;
         }
     </style>
 </head>
@@ -59,6 +59,7 @@
     var c, gl;
     var v_shader, f_shader, shaderprogram;
     var vertices, indices, v_buffer, i_buffer;
+    var isDragging = false;
 
     window.onload = function() {
 
@@ -118,6 +119,13 @@
             all_fish.push( createFish( random_offset, random_color, random_scale, 1 ) );
         }
 
+
+        // Add mouse event listeners
+        c.addEventListener('mousedown', onMouseDown);
+        c.addEventListener('mousemove', onMouseMove);
+        c.addEventListener('mouseup', onMouseUp);
+        c.addEventListener('mouseleave', onMouseUp);
+
         animate();
 
     };
@@ -172,6 +180,43 @@
 
     };
 
+    // Convert screen coordinates to WebGL coordinates
+    function screenToGL(x, y) {
+        const rect = c.getBoundingClientRect();
+        const glX = ((x - rect.left) / rect.width) * 2 - 1;
+        const glY = -(((y - rect.top) / rect.height) * 2 - 1);
+        return [glX, glY];
+    }
+
+    // Check if click is near the big red fish
+    function isNearFish(x, y) {
+        const fishPos = all_fish[0][3];
+        const fishScale = all_fish[0][5];
+        const distance = Math.sqrt((x - fishPos[0]) ** 2 + (y - fishPos[1]) ** 2);
+        return distance < 0.3 * fishScale;
+    }
+
+    function onMouseDown(e) {
+        const [glX, glY] = screenToGL(e.clientX, e.clientY);
+        if (isNearFish(glX, glY)) {
+            isDragging = true;
+            c.style.cursor = 'grabbing';
+        }
+    }
+
+    function onMouseMove(e) {
+        if (isDragging) {
+            const [glX, glY] = screenToGL(e.clientX, e.clientY);
+            all_fish[0][3][0] = glX;
+            all_fish[0][3][1] = glY;
+        }
+    }
+
+    function onMouseUp(e) {
+        isDragging = false;
+        c.style.cursor = 'pointer';
+    }
+
     var step_x = .01;
     var step_y = .01;
     var direction = -1;
@@ -203,10 +248,12 @@
 
             // Move fish horizontally
             if (r === 0) {
-                // Big red fish goes left
-                current_offset[0] -= 0.01;
-                if (current_offset[0] < -1.2) {
-                    current_offset[0] = 1.2; // wrap around from left to right
+                if (!isDragging) {
+                    // Big red fish goes left
+                    current_offset[0] -= 0.01;
+                    if (current_offset[0] < -1.2) {
+                        current_offset[0] = 1.2; // wrap around from left to right
+                    }
                 }
             } else {
                 // Other fish go right
@@ -296,6 +343,11 @@
     };
 
 </script>
+
+<audio controls autoplay loop>
+    <source src="./bonus/ambience-dining-with-the-fish-lots-of-bubbles-underwater-246594.mp3" type="audio/mpeg">
+</audio>
+
 <body>
 <canvas id="c"></canvas>
 </body>
