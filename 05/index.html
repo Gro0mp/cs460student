@@ -1,0 +1,236 @@
+<html>
+<head>
+    <style>
+        html, body {
+            background-color:#000;
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden !important;
+        }
+    </style>
+
+    <script src="https://mrdoob.github.io/stats.js/build/stats.min.js"></script>
+
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+
+    <script type="importmap">
+        {
+          "imports": {
+            "three": "https://unpkg.com/three@latest/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@latest/examples/jsm/"
+          }
+        }
+    </script>
+
+    <script type="module">
+
+        import * as THREE from 'three';
+        import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+        import {AnaglyphEffect} from "three/addons/effects/AnaglyphEffect.js";
+        import {GLTFLoader} from "three/addons/loaders/GLTFLoader.js";
+        import {VertexNormalsHelper} from 'three/addons/helpers/VertexNormalsHelper.js';
+
+        import {Pane} from 'https://cdn.jsdelivr.net/npm/tweakpane@4.0.5/dist/tweakpane.min.js';
+
+        var renderer, controls, scene, camera, loader, pane, stats, effect;
+        var light, ambient;
+
+        // SETTINGS and HELPER for TWEAKPANE
+        window['SCENE'] = {
+            'anaglyph': false,
+            'poly': null,
+            'blender': null,
+            'rotate_poly': false,
+            'rotate_blender': false,
+            'blender_helper': null,
+            'blender_old_material': null,
+            'do_rotate_poly': function() {
+                window['SCENE']['rotate_poly'] = !window['SCENE']['rotate_poly'];
+            },
+            'do_rotate_blender': function() {
+                window['SCENE']['rotate_blender'] = !window['SCENE']['rotate_blender'];
+            },
+            'change_material': function() {
+                if (!window['SCENE']['blender_old_material']) {
+                    window['SCENE']['blender_old_material'] = window['SCENE']['blender'].material.clone();
+                    window['SCENE']['blender'].material = new THREE.MeshNormalMaterial();
+                } else {
+                    window['SCENE']['blender'].material = window['SCENE']['blender_old_material'].clone();
+                    window['SCENE']['blender_old_material'] = null;
+                }
+            }
+        };
+
+        window.onload = function() {
+
+            scene = new THREE.Scene();
+
+            // CAMERA
+            camera = new THREE.PerspectiveCamera(
+                60,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                10000
+            );
+            camera.position.set(0, 10, 0);
+
+            // RENDERER
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // ANAGLYPH EFFECT
+            effect = new AnaglyphEffect(renderer);
+            effect.setSize(window.innerWidth, window.innerHeight);
+
+            // LIGHTING
+            ambient = new THREE.AmbientLight(0xffffff, 1);
+            scene.add(ambient);
+
+            light = new THREE.DirectionalLight(0xffffff, 1);
+            light.position.set(50, 50, 50);
+            scene.add(light);
+
+            // CONTROLS
+            controls = new OrbitControls(camera, renderer.domElement);
+
+            // STATS.JS
+            stats = new Stats();
+            document.body.appendChild(stats.domElement);
+
+            loader = new GLTFLoader();
+
+            // Load first model (poly.glb - PolyCam export)
+            loader.load('poly.glb', (gltf) => {
+                var poly = gltf.scenes[0].children[0];
+                scene.add(poly);
+
+                // Scale up
+                poly.scale.set(10, 10, 10);
+
+                // Position to the left
+                poly.translateX(-10);
+
+                // Identity quaternion (no rotation)
+                poly.quaternion.identity();
+
+                // Store in window.SCENE
+                window.SCENE.poly = poly;
+
+                // Setup UI for PolyCam mesh
+                var polyui = pane.addFolder({title: 'PolyCam Mesh'});
+                polyui.addBinding(window.SCENE.poly.material, 'wireframe');
+                polyui.addButton({title:'rotate!'}).on('click', () => {
+                    window.SCENE.do_rotate_poly();
+                });
+            });
+
+            // Load second model (blender.glb - Blender export)
+            loader.load('plush.glb', (gltf) => {
+                var blender = gltf.scenes[0].children[0];
+                scene.add(blender);
+
+                // Scale up
+                blender.scale.set(10, 10, 10);
+
+                // Position to the right
+                blender.translateX(10);
+
+                // Identity quaternion (no rotation)
+                blender.quaternion.identity();
+
+                // Store in window.SCENE
+                window.SCENE.blender = blender;
+
+                // Setup Vertex Normals Helper
+                var helper = new VertexNormalsHelper(blender, 0.1, 0x0000ff);
+                helper.visible = false;
+                scene.add(helper);
+                window.SCENE.blender_helper = helper;
+
+                // Setup UI for Blender mesh
+                var blenderui = pane.addFolder({title: 'Blender Mesh'});
+                blenderui.addBinding(helper, 'visible', {label:'Show normals!'});
+                blenderui.addButton({title:'rotate!'}).on('click', () => {
+                    window.SCENE.do_rotate_blender();
+                });
+                blenderui.addButton({title:'Change Material!'}).on('click', () => {
+                    window.SCENE.change_material();
+                });
+            });
+
+            // TWEAKPANE UI
+            pane = new Pane();
+
+            var sceneui = pane.addFolder({title: 'Scene'});
+            sceneui.addBinding(window.SCENE, 'anaglyph');
+            sceneui.addBinding(light.position, 'x', {min:-100, max:100, label:'Light X'});
+            sceneui.addBinding(light.position, 'y', {min:-100, max:100, label:'Light Y'});
+            sceneui.addBinding(light.position, 'z', {min:-100, max:100, label:'Light Z'});
+            sceneui.addBinding(light, 'intensity', {min:0, max:5, label:'Light Intensity'});
+            sceneui.addBinding(ambient, 'color', {label:'Ambient Color'});
+
+            animate();
+
+        };
+
+
+        function animate() {
+
+            requestAnimationFrame(animate);
+
+            // Handle PolyCam rotation
+            if (window.SCENE.poly) {
+                var q_identity = new THREE.Quaternion(0, 0, 0, 1);
+                var q_180 = new THREE.Quaternion();
+                q_180.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+
+                if (window.SCENE.rotate_poly) {
+                    window.SCENE.poly.quaternion.slerp(q_180, 0.01);
+                } else {
+                    window.SCENE.poly.quaternion.slerp(q_identity, 0.01);
+                }
+            }
+
+            // Handle Blender rotation
+            if (window.SCENE.blender) {
+                var q_identity = new THREE.Quaternion(0, 0, 0, 1);
+                var q_180 = new THREE.Quaternion();
+                q_180.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+
+                if (window.SCENE.rotate_blender) {
+                    window.SCENE.blender.quaternion.slerp(q_180, 0.01);
+                } else {
+                    window.SCENE.blender.quaternion.slerp(q_identity, 0.01);
+                }
+
+                // Update normal helper if visible
+                if (window.SCENE.blender_helper) {
+                    window.SCENE.blender_helper.update();
+                }
+            }
+
+            // Render with anaglyph effect or normal renderer
+            if (window.SCENE.anaglyph) {
+                effect.render(scene, camera);
+            } else {
+                renderer.render(scene, camera);
+            }
+
+            stats.update();
+
+        };
+
+        // Handle window resize
+        window.addEventListener('resize', function() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            effect.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</head>
+<body></body>
+</html>
