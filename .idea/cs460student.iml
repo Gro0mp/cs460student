@@ -11,5 +11,9 @@
     <orderEntry type="library" name="xtk_edge" level="application" />
     <orderEntry type="library" name="es-module-shims" level="application" />
     <orderEntry type="library" name="glmatrix" level="application" />
+    <orderEntry type="library" name="aframe" level="application" />
+    <orderEntry type="library" name="aframe-ar" level="application" />
+    <orderEntry type="library" name="babylon" level="application" />
+    <orderEntry type="library" name="babylonjs.loaders" level="application" />
   </component>
 </module>
